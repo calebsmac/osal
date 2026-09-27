@@ -278,10 +278,15 @@ int32 OS_Posix_TaskAPI_Impl_Init(void)
      * This will be used for the signal mask of the main thread
      * (This way it will end up as the default/original signal mask plus all RT sigs)
      */
+#ifdef SIGRTMIN
     for (sig = SIGRTMIN; sig <= SIGRTMAX; ++sig)
     {
         sigaddset(&POSIX_GlobalVars.NormalSigMask, sig);
     }
+#else
+    /* no RT signals (Darwin): the NOS timebases do not use signals there */
+    (void)sig;
+#endif
 
     /*
      * SIGHUP is used to wake up the main thread when necessary,
@@ -431,6 +436,29 @@ int32 OS_Posix_TaskAPI_Impl_Init(void)
     return OS_SUCCESS;
 }
 
+#ifdef __APPLE__
+/*
+ * Darwin's pthread_setname_np() can only name the calling thread, so a new
+ * thread names itself: it starts in this trampoline, which applies the name
+ * and then runs the real entry point.
+ */
+typedef struct
+{
+    PthreadFuncPtr_t entry;
+    void *           entry_arg;
+    char             name[OS_MAX_API_NAME];
+} OS_Darwin_TaskStart_t;
+
+static void *OS_Darwin_TaskTrampoline(void *arg)
+{
+    OS_Darwin_TaskStart_t start = *(OS_Darwin_TaskStart_t *)arg;
+
+    free(arg);
+    pthread_setname_np(start.name);
+    return start.entry(start.entry_arg);
+}
+#endif
+
 /*----------------------------------------------------------------
  *
  *  Purpose: Local helper routine, not part of OSAL API.
@@ -545,16 +573,40 @@ int32 OS_Posix_InternalTaskCreate_Impl(pthread_t *pthr, const char *taskname, os
     /*
      ** Create thread
      */
+#ifdef __APPLE__
+    {
+        OS_Darwin_TaskStart_t *start = malloc(sizeof(*start));
+
+        if (start == NULL)
+        {
+            OS_DEBUG("malloc error in OS_TaskCreate\n");
+            return OS_ERROR;
+        }
+        start->entry     = entry;
+        start->entry_arg = entry_arg;
+        strncpy(start->name, taskname, sizeof(start->name) - 1);
+        start->name[sizeof(start->name) - 1] = 0;
+
+        return_code = pthread_create(pthr, &custom_attr, OS_Darwin_TaskTrampoline, start);
+        if (return_code != 0)
+        {
+            free(start);
+        }
+    }
+#else
     return_code = pthread_create(pthr, &custom_attr, entry, entry_arg);
+#endif
     if (return_code != 0)
     {
         OS_DEBUG("pthread_create error in OS_TaskCreate: %s\n", strerror(return_code));
         return OS_ERROR;
     }
 
+#ifndef __APPLE__
     /* Set threadname for debugging */
     //OS_printf("pthread_setname_np to %s in  OS_TaskCreate\n", taskname);
     pthread_setname_np(*pthr, taskname);
+#endif
     //return_code = pthread_setname_np(*pthr, taskname);
     //if (return_code != 0)
     //{
@@ -770,7 +822,22 @@ int32 OS_TaskSetPriority_Impl(const OS_object_token_t *token, osal_priority_t ne
         /*
         ** Set priority
         */
+#ifdef __APPLE__
+        /* Darwin has no pthread_setschedprio: change the priority, keep the policy */
+        {
+            int                policy;
+            struct sched_param param;
+
+            ret = pthread_getschedparam(impl->id, &policy, &param);
+            if (ret == 0)
+            {
+                param.sched_priority = os_priority;
+                ret                  = pthread_setschedparam(impl->id, policy, &param);
+            }
+        }
+#else
         ret = pthread_setschedprio(impl->id, os_priority);
+#endif
         if (ret != 0)
         {
             OS_DEBUG("pthread_setschedprio: Task ID = %lu, prio = %d, err = %s\n",

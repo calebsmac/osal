@@ -61,8 +61,17 @@ int NOS_clock_nanosleep (clockid_t clock_id, int flags, const struct timespec * 
     delay.tv_sec = 0;
     delay.tv_nsec = NOS_NANO / CFE_PSP_ticks_per_second;
     int interrupt = 0;
+#ifdef __APPLE__
+    real_rem.tv_sec = 0;
+    real_rem.tv_nsec = 0;
+#endif
     while ((sim_time < end_time) && !interrupt) {
+#ifdef __APPLE__
+        /* Darwin has no clock_nanosleep; the real delay is always one relative tick */
+        interrupt = (nanosleep(&delay, &real_rem) == 0) ? 0 : errno;
+#else
         interrupt = clock_nanosleep (clock_id, flags, &delay, &real_rem);
+#endif
         pthread_mutex_lock(&CFE_PSP_sim_time_mutex);
         sim_time = CFE_PSP_sim_time;
         pthread_mutex_unlock(&CFE_PSP_sim_time_mutex);
@@ -96,7 +105,7 @@ typedef struct NOS_timer_t {
     NE_SimTime expire_time;
 } NOS_timer_t;
 
-static pthread_mutex_t NOS_timer_table_mutex;
+static pthread_mutex_t NOS_timer_table_mutex = PTHREAD_MUTEX_INITIALIZER; /* a zeroed mutex is invalid on Darwin */
 static NOS_timer_t NOS_timer_table[OS_MAX_TIMEBASES];
 
 int NOS_timer_create (clockid_t clock_id, const struct sigevent * evp, timer_t * timerid)
@@ -191,7 +200,11 @@ void NOS_timer_fire(NE_SimTime time)
                 // Use evp to do the timer action
                 struct sigevent evp = NOS_timer_table[i].evp;
                 if (evp.sigev_notify == SIGEV_SIGNAL) {
+#ifdef __APPLE__
+                    OS_NOS_TimeBasePostTick(evp.sigev_value.sival_int);
+#else
                     pthread_kill(OS_impl_timebase_table[evp.sigev_value.sival_int].handler_thread, evp.sigev_signo);
+#endif
                 } 
                 //else {
                 //    OS_printf("NOS_timer_fire:  timer %d, evp.sigev_notify %d not implemented\n", i, evp.sigev_notify);

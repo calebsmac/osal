@@ -28,6 +28,14 @@ set(NOS_BASE_SRCLIST
     src/os-impl-timebase.c
 )
 
+# Darwin lacks POSIX message queues, unnamed semaphores, POSIX timer types,
+# clock_nanosleep and pthread_mutex_timedlock: in-process versions
+if (APPLE)
+    list(APPEND NOS_BASE_SRCLIST
+        ../posix/src/os-impl-darwin-compat.c
+    )
+endif ()
+
 # Use portable blocks for basic I/O
 set(NOS_IMPL_SRCLIST
     ../portable/os-impl-console-bsp.c
@@ -83,6 +91,7 @@ add_library(osal_nos_impl OBJECT
 target_include_directories(osal_nos_impl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../posix/inc
+    ${NOSENGINE_INCLUDE_DIRS}   # Client/CInterface.h (NOS-time.c), when not in a system dir
 )
 target_compile_definitions(osal_public_api INTERFACE
     _NOS_OS_

@@ -34,6 +34,10 @@
 
 #include "NOS-time.h"
 
+#ifdef __APPLE__
+extern int64_t CFE_PSP_ticks_per_second;
+#endif
+
 /*
  * Added SEM_VALUE_MAX Define
  */
@@ -179,6 +183,51 @@ int32 OS_CountSemTimedWait_Impl(const OS_object_token_t *token, uint32 msecs)
         ts.tv_sec++;
     }
 
+#ifdef __APPLE__
+    /*
+     * The deadline above is in NOS simulated time.  Wait for the semaphore in
+     * real slices of one tick and give up once simulated time reaches the
+     * deadline -- the model NOS_clock_nanosleep() uses.
+     */
+    for (;;)
+    {
+        struct timespec now;
+        struct timespec slice;
+
+        if (sem_trywait(&impl->id) == 0)
+        {
+            result = OS_SUCCESS;
+            break;
+        }
+
+        NOS_clock_gettime(CLOCK_REALTIME, &now);
+        if (now.tv_sec > ts.tv_sec || (now.tv_sec == ts.tv_sec && now.tv_nsec >= ts.tv_nsec))
+        {
+            result = OS_SEM_TIMEOUT;
+            break;
+        }
+
+        clock_gettime(CLOCK_REALTIME, &slice);
+        slice.tv_nsec += NOS_NANO / CFE_PSP_ticks_per_second;
+        while (slice.tv_nsec >= NOS_NANO)
+        {
+            slice.tv_nsec -= NOS_NANO;
+            slice.tv_sec++;
+        }
+
+        if (sem_timedwait(&impl->id, &slice) == 0)
+        {
+            result = OS_SUCCESS;
+            break;
+        }
+        if (errno != ETIMEDOUT)
+        {
+            /* unspecified failure */
+            result = OS_SEM_FAILURE;
+            break;
+        }
+    }
+#else
     if (sem_timedwait(&impl->id, &ts) == 0)
     {
         result = OS_SUCCESS;
@@ -192,6 +241,7 @@ int32 OS_CountSemTimedWait_Impl(const OS_object_token_t *token, uint32 msecs)
         /* unspecified failure */
         result = OS_SEM_FAILURE;
     }
+#endif
 
     return result;
 }

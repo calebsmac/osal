@@ -130,6 +130,42 @@ void OS_TimeBaseUnlock_Impl(const OS_object_token_t *token)
     pthread_mutex_unlock(&impl->handler_mutex);
 }
 
+#ifdef __APPLE__
+/*----------------------------------------------------------------
+ *
+ *  Purpose: Local helper routine, not part of OSAL API.
+ *           Releases the tick lock if the handler thread is canceled.
+ *
+ *-----------------------------------------------------------------*/
+static void OS_NOS_TickUnlock(void *arg)
+{
+    pthread_mutex_unlock((pthread_mutex_t *)arg);
+}
+
+/*----------------------------------------------------------------
+ *
+ *  Purpose: Delivers one simulated timer tick to the handler thread of
+ *           the timebase at table index idx (Darwin replacement for the
+ *           RT signal that NOS_timer_fire() sends on Linux).
+ *
+ *-----------------------------------------------------------------*/
+void OS_NOS_TimeBasePostTick(int idx)
+{
+    OS_impl_timebase_internal_record_t *impl;
+
+    if (idx < 0 || idx >= OS_MAX_TIMEBASES)
+    {
+        return;
+    }
+
+    impl = &OS_impl_timebase_table[idx];
+    pthread_mutex_lock(&impl->tick_mutex);
+    ++impl->tick_pending;
+    pthread_cond_signal(&impl->tick_cond);
+    pthread_mutex_unlock(&impl->tick_mutex);
+}
+#endif
+
 /*----------------------------------------------------------------
  *
  *  Purpose: Local helper routine, not part of OSAL API.
@@ -142,7 +178,9 @@ static uint32 OS_TimeBase_SigWaitImpl(osal_id_t obj_id)
     OS_impl_timebase_internal_record_t *impl;
     OS_timebase_internal_record_t *     timebase;
     uint32                              interval_time;
+#ifndef __APPLE__
     int                                 sig;
+#endif
 
     interval_time = 0;
 
@@ -151,7 +189,20 @@ static uint32 OS_TimeBase_SigWaitImpl(osal_id_t obj_id)
         impl     = OS_OBJECT_TABLE_GET(OS_impl_timebase_table, token);
         timebase = OS_OBJECT_TABLE_GET(OS_timebase_table, token);
 
+#ifdef __APPLE__
+        /* wait for NOS_timer_fire() to post a tick (no RT signals on Darwin) */
+        pthread_mutex_lock(&impl->tick_mutex);
+        pthread_cleanup_push(OS_NOS_TickUnlock, &impl->tick_mutex);
+        while (impl->tick_pending == 0)
+        {
+            pthread_cond_wait(&impl->tick_cond, &impl->tick_mutex);
+        }
+        --impl->tick_pending;
+        pthread_cleanup_pop(1);
+        ret = 0;
+#else
         ret = sigwait(&impl->sigset, &sig);
+#endif
 
         if (ret != 0)
         {
@@ -275,6 +326,20 @@ int32 OS_Posix_TimeBaseAPI_Impl_Init(void)
                 return_code = OS_ERROR;
                 break;
             }
+#ifdef __APPLE__
+            /* the simulated tick channel (see OS_NOS_TimeBasePostTick) */
+            status = pthread_mutex_init(&OS_impl_timebase_table[idx].tick_mutex, NULL);
+            if (status == 0)
+            {
+                status = pthread_cond_init(&OS_impl_timebase_table[idx].tick_cond, NULL);
+            }
+            if (status != 0)
+            {
+                OS_DEBUG("Error: Tick mutex/condvar could not be created: %s\n", strerror(status));
+                return_code = OS_ERROR;
+                break;
+            }
+#endif
         }
 
         /*
@@ -326,10 +391,12 @@ int32 OS_TimeBaseCreate_Impl(const OS_object_token_t *token)
 {
     int32                               return_code;
     int                                 status;
+#ifndef __APPLE__
     int                                 i;
     osal_index_t                        idx;
-    struct sigevent                     evp;
     struct timespec                     ts;
+#endif
+    struct sigevent                     evp;
     OS_impl_timebase_internal_record_t *local;
     OS_timebase_internal_record_t *     timebase;
     OS_VoidPtrValueWrapper_t            arg;
@@ -373,6 +440,38 @@ int32 OS_TimeBaseCreate_Impl(const OS_object_token_t *token)
      * If no external sync function is provided then this will set up a POSIX
      * timer to locally simulate the timer tick using the CPU clock.
      */
+#ifdef __APPLE__
+    if (timebase->external_sync == NULL)
+    {
+        /*
+         * Darwin has no RT signals.  assigned_signal only marks this timebase
+         * as simulated (nonzero, unique per slot); NOS_timer_fire() delivers
+         * the ticks through OS_NOS_TimeBasePostTick(), addressed by the table
+         * index carried in sigev_value.
+         */
+        local->assigned_signal = (int)token->obj_idx + 1;
+        sigemptyset(&local->sigset);
+
+        pthread_mutex_lock(&local->tick_mutex);
+        local->tick_pending = 0;
+        pthread_mutex_unlock(&local->tick_mutex);
+
+        memset((void *)&evp, 0, sizeof(evp));
+        evp.sigev_notify          = SIGEV_SIGNAL;
+        evp.sigev_signo           = local->assigned_signal;
+        evp.sigev_value.sival_int = (int)token->obj_idx;
+
+        status = NOS_timer_create(OS_PREFERRED_CLOCK, &evp, &local->host_timerid);
+        if (status < 0)
+        {
+            return_code = OS_TIMER_ERR_UNAVAILABLE;
+        }
+        else
+        {
+            timebase->external_sync = OS_TimeBase_SigWaitImpl;
+        }
+    }
+#else
     if (timebase->external_sync == NULL)
     {
         sigemptyset(&local->sigset);
@@ -469,6 +568,7 @@ int32 OS_TimeBaseCreate_Impl(const OS_object_token_t *token)
             timebase->external_sync = OS_TimeBase_SigWaitImpl;
         } while (0);
     }
+#endif /* __APPLE__ */
 
     if (return_code != OS_SUCCESS)
     {

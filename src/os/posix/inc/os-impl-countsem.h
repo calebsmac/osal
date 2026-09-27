@@ -28,6 +28,9 @@
 
 #include "osconfig.h"
 #include <semaphore.h>
+#ifdef __APPLE__
+#include "os-impl-darwin-compat.h" /* Darwin has no unnamed semaphores */
+#endif
 
 typedef struct
 {

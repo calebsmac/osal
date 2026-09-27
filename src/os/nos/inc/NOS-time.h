@@ -21,6 +21,11 @@
 #define _NOS_STUB_TIME_H_
 
 #include <time.h>
+#ifdef __APPLE__
+#include <signal.h> /* struct sigevent */
+/* timer_t, struct itimerspec (relative path: also included from the PSP) */
+#include "../../posix/inc/os-impl-darwin-timer.h"
+#endif
 
 #define NOS_NANO 1000000000
 
@@ -37,6 +42,11 @@ int NOS_timer_delete (timer_t timerid) ;
 // int NOS_timer_gettime (timer_t timerid, struct itimerspec * value); // unused
 int NOS_timer_settime (timer_t timerid, int flags, const struct itimerspec * value, struct itimerspec * ovalue);
 void NOS_to_real_timespec(const struct timespec *nos, struct timespec *real);
+
+#ifdef __APPLE__
+/* Darwin: delivers a simulated tick to a timebase (os-impl-timebase.c) */
+void OS_NOS_TimeBasePostTick(int idx);
+#endif
 
 #endif /* _NOS_STUB_TIME_H_ */
 

@@ -57,6 +57,10 @@ extern "C"
 ** these extra attributes.  These test builds define the OSAPI_NO_SPECIAL_ATTRIBS
 ** macro to disable this.
 */
+#if defined(__APPLE__) && defined(OS_USED)
+#undef OS_USED /* the macOS SDK's <os/base.h> has its own, equivalent OS_USED */
+#endif
+
 #if defined(__GNUC__) && !defined(OSAPI_NO_SPECIAL_ATTRIBS)
 #define _EXTENSION_     __extension__
 #define OS_USED         __attribute__((used))

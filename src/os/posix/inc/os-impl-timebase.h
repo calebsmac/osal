@@ -29,6 +29,9 @@
 #include "osconfig.h"
 #include <pthread.h>
 #include <signal.h>
+#ifdef __APPLE__
+#include "os-impl-darwin-compat.h" /* timer_t */
+#endif
 
 typedef struct
 {
@@ -39,6 +42,16 @@ typedef struct
     sigset_t        sigset;
     sig_atomic_t    reset_flag;
     struct timespec softsleep;
+#ifdef __APPLE__
+    /*
+     * Darwin has no real-time signals, so a simulated timer tick is not a
+     * queued signal to the handler thread: it increments tick_pending and
+     * signals tick_cond (see the NOS OSAL's NOS_timer_fire()).
+     */
+    pthread_mutex_t tick_mutex;
+    pthread_cond_t  tick_cond;
+    unsigned long   tick_pending;
+#endif
 } OS_impl_timebase_internal_record_t;
 
 /****************************************************************************************

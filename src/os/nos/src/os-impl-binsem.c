@@ -63,7 +63,17 @@ int32 OS_Posix_BinSemAcquireMutex(pthread_mutex_t *mut)
 {
     struct timespec timeout;
 
+#ifdef __APPLE__
+    /*
+     * pthread_mutex_timedlock() measures its deadline on the real clock, so
+     * "now" comes from the real clock here.  (The Linux build reads NOS sim
+     * time instead; with sim time behind the real clock that deadline has
+     * already passed and the call degrades to a try-lock.)
+     */
+    if (clock_gettime(CLOCK_REALTIME, &timeout) != 0)
+#else
     if (NOS_clock_gettime(CLOCK_REALTIME, &timeout) != 0)
+#endif
     {
         return OS_SEM_FAILURE;
     }

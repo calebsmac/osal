@@ -25,10 +25,19 @@ target_compile_definitions(osal_public_api INTERFACE
     _XOPEN_SOURCE=600
 )
 
-# Linux system libraries required for the final link of applications using OSAL
-target_link_libraries(osal_public_api INTERFACE
-    pthread dl rt
-)
+if (APPLE)
+    # On Darwin _XOPEN_SOURCE hides every non-POSIX API unless _DARWIN_C_SOURCE
+    # is set too.  pthread, dl and the clock functions are all in libSystem
+    # (there is no librt).
+    target_compile_definitions(osal_public_api INTERFACE
+        _DARWIN_C_SOURCE
+    )
+else ()
+    # Linux system libraries required for the final link of applications using OSAL
+    target_link_libraries(osal_public_api INTERFACE
+        pthread dl rt
+    )
+endif ()
 
 # This BSP only works with "posix" OS layer.
 # Confirming this reduces risk of accidental misconfiguration

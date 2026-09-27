@@ -41,11 +41,17 @@
 #include <time.h>
 #include <errno.h>
 #include <pthread.h>
+#ifndef __APPLE__
 #include <mqueue.h>
+#endif
 #include <fcntl.h>
 #include <semaphore.h>
 #include <sys/types.h>
 #include <sys/signal.h>
+#ifdef __APPLE__
+/* in-process message queues, semaphores, timer types (not provided by Darwin) */
+#include "os-impl-darwin-compat.h"
+#endif
 
 /*
  * Use the global definitions from the shared layer

@@ -27,7 +27,11 @@
 #define OS_IMPL_QUEUES_H
 
 #include "osconfig.h"
+#ifdef __APPLE__
+#include "os-impl-darwin-compat.h" /* Darwin has no <mqueue.h> */
+#else
 #include <mqueue.h>
+#endif
 
 /* queues */
 typedef struct

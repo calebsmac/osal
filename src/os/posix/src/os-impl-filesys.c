@@ -38,7 +38,9 @@
 #include <sys/statvfs.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
-#include <sys/vfs.h>
+#ifndef __APPLE__
+#include <sys/vfs.h> /* Linux-only; statvfs() comes from <sys/statvfs.h> */
+#endif
 
 #include "os-posix.h"
 #include "os-shared-filesys.h"
