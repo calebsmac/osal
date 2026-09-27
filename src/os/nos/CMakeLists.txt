@@ -91,8 +91,12 @@ add_library(osal_nos_impl OBJECT
 target_include_directories(osal_nos_impl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../posix/inc
-    ${NOSENGINE_INCLUDE_DIRS}   # Client/CInterface.h (NOS-time.c), when not in a system dir
 )
+# Client/CInterface.h (NOS-time.c) when NOS Engine is not installed in a
+# system directory: included as a system header, as it is from /usr/include
+if (NOSENGINE_INCLUDE_DIRS)
+    target_include_directories(osal_nos_impl SYSTEM PRIVATE ${NOSENGINE_INCLUDE_DIRS})
+endif ()
 target_compile_definitions(osal_public_api INTERFACE
     _NOS_OS_
     _GNU_SOURCE
